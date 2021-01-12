@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/cofyc/terraform-provider-dnspod/dnspod/client"
@@ -54,11 +55,13 @@ func resourceRecord() *schema.Resource {
 				Required: true,
 			},
 			"mx": {
+				// note that this field is type string in the DNSPod API
 				Type:         schema.TypeInt,
 				ValidateFunc: validation.IntBetween(1, 20),
 				Optional:     true, // required if the Type is MX
 			},
 			"ttl": {
+				// note that this field is type string in the DNSPod API
 				Type:         schema.TypeInt,
 				ValidateFunc: validation.IntBetween(1, 604800), // 不同等级域名最小值不同
 				Optional:     true,
@@ -79,21 +82,60 @@ func resourceRecord() *schema.Resource {
 	}
 }
 
+func prepareRecordForCreateAndModify(d *schema.ResourceData, record *client.Record, create bool) error {
+	var err error
+	if create {
+		record.DomainId = d.Get("domain_id").(string)
+	} else {
+		record.DomainId, record.RecordId, err = splitId(d.Id())
+		if err != nil {
+			return err
+		}
+	}
+
+	record.SubDomain = d.Get("sub_domain").(string)
+	record.RecordType = d.Get("record_type").(string)
+	record.RecordLine = d.Get("record_line").(string)
+	record.Value = d.Get("value").(string)
+
+	// mx
+	if mx, ok := d.GetOk("mx"); ok {
+		if record.RecordType != "MX" {
+			return fmt.Errorf("mx is not expected when the record type is not MX (type: %s)", record.RecordType)
+		}
+		record.Mx = strconv.Itoa(mx.(int))
+	} else {
+		if record.RecordType == "MX" {
+			return fmt.Errorf("mx is recorduired when the record type is MX")
+		}
+	}
+
+	// ttl
+	if ttl, ok := d.GetOk("ttl"); ok {
+		record.Ttl = strconv.Itoa(ttl.(int))
+	} else {
+		return fmt.Errorf("ttl is missing")
+	}
+
+	// weight
+	if weight, ok := d.GetOk("weight"); ok {
+		record.Weight = intPtr(weight.(int))
+	}
+
+	// status
+	record.Status = d.Get("status").(string)
+
+	return nil
+}
+
 func resourceRecordCreate(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*client.Client)
 
 	req := client.RecordCreateRequest{}
-	req.DomainId = d.Get("domain_id").(string)
-	req.SubDomain = d.Get("sub_domain").(string)
-	req.RecordType = d.Get("record_type").(string)
-	req.RecordLine = d.Get("record_line").(string)
-	req.Value = d.Get("value").(string)
-	req.Mx = d.Get("mx").(string)
-	req.Ttl = d.Get("ttl").(string)
-	if weight, ok := d.GetOk("weight"); ok {
-		req.Weight = intPtr(weight.(int))
+
+	if err := prepareRecordForCreateAndModify(d, (*client.Record)(&req), true); err != nil {
+		return err
 	}
-	req.Status = d.Get("status").(string)
 
 	var resp client.RecordCreateResponse
 	err := conn.Call("Record.Create", &req, &resp)
@@ -112,23 +154,15 @@ func resourceRecordUpdate(d *schema.ResourceData, meta interface{}) error {
 
 	var err error
 	req := client.RecordModifyRequest{}
-	req.DomainId, req.RecordId, err = splitId(d.Id())
-	if err != nil {
+
+	if err := prepareRecordForCreateAndModify(d, (*client.Record)(&req), false); err != nil {
 		return err
 	}
-	req.SubDomain = d.Get("sub_domain").(string)
-	req.RecordType = d.Get("record_type").(string)
-	req.RecordLine = d.Get("record_line").(string)
-	req.Value = d.Get("value").(string)
-	req.Mx = d.Get("mx").(string)
-	req.Ttl = d.Get("ttl").(string)
-	if weight, ok := d.GetOk("weight"); ok {
-		req.Weight = intPtr(weight.(int))
-	}
-	req.Status = d.Get("status").(string)
 
 	var resp client.RecordModifyResponse
+	log.Printf("[DEBUG] Record.Modify Request: %+v", req)
 	err = conn.Call("Record.Modify", &req, &resp)
+	log.Printf("[DEBUG] Record.Modify Response: %+v, Error: %v", resp, err)
 	if err != nil {
 		if bsce, ok := err.(*client.BadStatusCodeError); ok && (bsce.Code == "6" || bsce.Code == "8") {
 			// 6 域名ID错误
@@ -145,7 +179,6 @@ func resourceRecordUpdate(d *schema.ResourceData, meta interface{}) error {
 
 func resourceRecordRead(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*client.Client)
-	log.Printf("[DEBUG] reading id %s", d.Id())
 
 	domainId, recordId, err := splitId(d.Id())
 	if err != nil {
@@ -170,11 +203,25 @@ func resourceRecordRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("record_type", resp.Record.RecordType)
 	d.Set("record_line", resp.Record.RecordLine)
 	d.Set("value", resp.Record.Value)
-	d.Set("mx", resp.Record.Mx)
-	d.Set("ttl", resp.Record.Ttl)
-	log.Printf("[DEBUG] %+v", resp.Record)
+
+	// mx
+	if resp.Record.RecordType == "MX" {
+		// set mx if the type is "MX"
+		mx, err := strconv.Atoi(resp.Record.Mx)
+		if err != nil {
+			return err
+		}
+		d.Set("mx", mx)
+	}
+
+	// ttl
+	ttl, err := strconv.Atoi(resp.Record.Ttl)
+	if err != nil {
+		return err
+	}
+	d.Set("ttl", ttl)
+
 	if resp.Record.Weight != nil {
-		log.Printf("[DEBUG] weight %d", *resp.Record.Weight)
 		d.Set("weight", *resp.Record.Weight)
 	}
 

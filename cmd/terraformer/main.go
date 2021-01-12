@@ -26,8 +26,10 @@ resource "dnspod_record" "{{ . | uniqueRecordName $.Domain }}" {
   record_type     = "{{ .Type }}"
   record_line     = "{{ .Line }}"
   value           = "{{ .Value }}"
-  mx              = "{{ .MX }}"
-  ttl             = "{{ .TTL }}"
+{{- if eq .Type "MX" }}
+  mx              = {{ .MX }}
+{{- end }}
+  ttl             = {{ .TTL }}
   status          = "{{ .Status }}"
 {{- if .Weight }}
   weight          = {{ .Weight }}
@@ -64,9 +66,17 @@ func generate(client *dnspod.Client, d *dnspod.Domain) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	err = tf.Truncate(0)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer tf.Close()
 	importFileName := filepath.Join(optOutput, fmt.Sprintf("dnspod_%s.sh", normalizeDomain(d.Name)))
 	importF, err := os.OpenFile(importFileName, os.O_RDWR|os.O_CREATE, 0755)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = importF.Truncate(0)
 	if err != nil {
 		log.Fatal(err)
 	}
