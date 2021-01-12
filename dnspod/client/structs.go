@@ -18,6 +18,9 @@ type Record struct {
 	// In Record.Info API, `enabled` is returned instead.
 	Status  string `json:"status"`
 	Enabled string `json:"enabled"`
+
+	// Available in Record.Remark & Record.Info API only.
+	Remark string `json:"remark"`
 }
 
 type Domain struct {
@@ -89,5 +92,11 @@ type RecordRemoveRequest struct {
 }
 
 type RecordRemoveResponse struct {
+	GeneralResponse
+}
+
+type RecordRemarkRequest Record
+
+type RecordRemarkResponse struct {
 	GeneralResponse
 }

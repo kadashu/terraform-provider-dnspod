@@ -34,6 +34,9 @@ resource "dnspod_record" "{{ . | uniqueRecordName $.Domain }}" {
 {{- if .Weight }}
   weight          = {{ .Weight }}
 {{- end}}
+{{- if .Remark }}
+  remark          = "{{ .Remark }}"
+{{- end}}
 }
 {{ end}}
 `
