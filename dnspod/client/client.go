@@ -42,6 +42,7 @@ type GeneralResponse struct {
 	Status ResponseStatus `json:"status"`
 }
 
+// https://docs.dnspod.cn/api/5f561f1de75cf42d25bf6710/
 func (resp *GeneralResponse) ValidateResponse() error {
 	if resp.Status.Code != "1" {
 		return &BadStatusCodeError{

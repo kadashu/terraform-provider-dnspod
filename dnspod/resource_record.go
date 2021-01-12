@@ -16,11 +16,6 @@ var (
 	recordIDRegex = regexp.MustCompile(`^\d+:\d+$`)
 )
 
-// intPtr returns a pointer to an int
-func intPtr(i int) *int {
-	return &i
-}
-
 func resourceRecord() *schema.Resource {
 	return &schema.Resource{
 		Create: resourceRecordCreate,
@@ -78,6 +73,10 @@ func resourceRecord() *schema.Resource {
 				ValidateFunc: validation.StringInSlice([]string{"enable", "disable"}, false),
 				Default:      "enable",
 			},
+			"remark": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
 		},
 	}
 }
@@ -128,6 +127,23 @@ func prepareRecordForCreateAndModify(d *schema.ResourceData, record *client.Reco
 	return nil
 }
 
+// https://docs.dnspod.cn/api/5f562a8be75cf42d25bf6886/
+func updateRecordRemark(conn *client.Client, domainID, recordID, remark string) error {
+	req := client.RecordRemarkRequest{
+		DomainId: domainID,
+		RecordId: recordID,
+		Remark:   remark,
+	}
+	var resp client.RecordRemarkResponse
+	log.Printf("[DEBUG] Record.Remark Request: %+v", req)
+	err := conn.Call("Record.Remark", &req, &resp)
+	log.Printf("[DEBUG] Record.Remark Response: %+v, Error: %v", resp, err)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func resourceRecordCreate(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*client.Client)
 
@@ -138,13 +154,23 @@ func resourceRecordCreate(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	var resp client.RecordCreateResponse
+	log.Printf("[DEBUG] Record.Create Request: %+v", req)
 	err := conn.Call("Record.Create", &req, &resp)
+	log.Printf("[DEBUG] Record.Create Response: %+v, Error: %v", resp, err)
 	if err != nil {
 		return err
 	}
 
 	id := (*resp.Record.Id).(string)
 	d.SetId(req.DomainId + ":" + id)
+
+	remark := d.Get("remark").(string)
+	if remark != "" {
+		err = updateRecordRemark(conn, req.DomainId, id, remark)
+		if err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -174,6 +200,14 @@ func resourceRecordUpdate(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 
+	if d.HasChange("remark") {
+		remark := d.Get("remark").(string)
+		err = updateRecordRemark(conn, req.DomainId, req.RecordId, remark)
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -186,7 +220,9 @@ func resourceRecordRead(d *schema.ResourceData, meta interface{}) error {
 	}
 	req := client.RecordInfoRequest{RecordId: recordId, DomainId: domainId}
 	var resp client.RecordInfoResponse
+	log.Printf("[DEBUG] Record.Info Request: %+v", req)
 	err = conn.Call("Record.Info", &req, &resp)
+	log.Printf("[DEBUG] Record.Info Response: %+v, Error: %v", resp, err)
 	if err != nil {
 		if bsce, ok := err.(*client.BadStatusCodeError); ok && (bsce.Code == "6" || bsce.Code == "8") {
 			// 6 域名ID错误
@@ -235,6 +271,8 @@ func resourceRecordRead(d *schema.ResourceData, meta interface{}) error {
 	}
 	d.Set("status", status)
 
+	d.Set("remark", resp.Record.Remark)
+
 	return nil
 }
 
@@ -247,7 +285,9 @@ func resourceRecordDelete(d *schema.ResourceData, meta interface{}) error {
 	}
 	var resp client.RecordRemoveResponse
 	req := client.RecordRemoveRequest{DomainId: domainId, RecordId: recordId}
+	log.Printf("[DEBUG] Record.Remove Request: %+v", req)
 	err = conn.Call("Record.Remove", &req, &resp)
+	log.Printf("[DEBUG] Record.Remove Response: %+v, Error: %v", resp, err)
 	if err != nil {
 		if bsce, ok := err.(*client.BadStatusCodeError); !ok || (bsce.Code != "6" && bsce.Code != "8") {
 			return err
@@ -265,4 +305,9 @@ func splitId(id string) (string, string, error) {
 	}
 	parts := strings.SplitN(id, ":", 2)
 	return parts[0], parts[1], nil
+}
+
+// intPtr returns a pointer to an int
+func intPtr(i int) *int {
+	return &i
 }
