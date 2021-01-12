@@ -1,12 +1,24 @@
 package dnspod
 
 import (
+	"fmt"
+	"log"
+	"regexp"
 	"strings"
 
 	"github.com/cofyc/terraform-provider-dnspod/dnspod/client"
-
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 )
+
+var (
+	recordIDRegex = regexp.MustCompile(`^\d+:\d+$`)
+)
+
+// intPtr returns a pointer to an int
+func intPtr(i int) *int {
+	return &i
+}
 
 func resourceRecord() *schema.Resource {
 	return &schema.Resource{
@@ -42,18 +54,26 @@ func resourceRecord() *schema.Resource {
 				Required: true,
 			},
 			"mx": {
-				Type:     schema.TypeString,
-				Optional: true,
-				Default:  "0",
+				Type:         schema.TypeInt,
+				ValidateFunc: validation.IntBetween(1, 20),
+				Optional:     true, // required if the Type is MX
 			},
 			"ttl": {
-				Type:     schema.TypeString,
-				Optional: true,
-				Default:  600,
+				Type:         schema.TypeInt,
+				ValidateFunc: validation.IntBetween(1, 604800), // 不同等级域名最小值不同
+				Optional:     true,
+				Default:      600,
 			},
 			"weight": {
-				Type:     schema.TypeString,
-				Optional: true,
+				Type:         schema.TypeInt,
+				Optional:     true,
+				ValidateFunc: validation.IntBetween(0, 100),
+			},
+			"status": {
+				Type:         schema.TypeString,
+				Optional:     true,
+				ValidateFunc: validation.StringInSlice([]string{"enable", "disable"}, false),
+				Default:      "enable",
 			},
 		},
 	}
@@ -70,7 +90,10 @@ func resourceRecordCreate(d *schema.ResourceData, meta interface{}) error {
 	req.Value = d.Get("value").(string)
 	req.Mx = d.Get("mx").(string)
 	req.Ttl = d.Get("ttl").(string)
-	req.Weight = d.Get("weight").(string)
+	if weight, ok := d.GetOk("weight"); ok {
+		req.Weight = intPtr(weight.(int))
+	}
+	req.Status = d.Get("status").(string)
 
 	var resp client.RecordCreateResponse
 	err := conn.Call("Record.Create", &req, &resp)
@@ -79,7 +102,7 @@ func resourceRecordCreate(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	id := (*resp.Record.Id).(string)
-	d.SetId(req.DomainId + "-" + id)
+	d.SetId(req.DomainId + ":" + id)
 
 	return nil
 }
@@ -87,18 +110,25 @@ func resourceRecordCreate(d *schema.ResourceData, meta interface{}) error {
 func resourceRecordUpdate(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*client.Client)
 
+	var err error
 	req := client.RecordModifyRequest{}
-	req.DomainId, req.RecordId = splitId(d.Id())
+	req.DomainId, req.RecordId, err = splitId(d.Id())
+	if err != nil {
+		return err
+	}
 	req.SubDomain = d.Get("sub_domain").(string)
 	req.RecordType = d.Get("record_type").(string)
 	req.RecordLine = d.Get("record_line").(string)
 	req.Value = d.Get("value").(string)
 	req.Mx = d.Get("mx").(string)
 	req.Ttl = d.Get("ttl").(string)
-	req.Weight = d.Get("weight").(string)
+	if weight, ok := d.GetOk("weight"); ok {
+		req.Weight = intPtr(weight.(int))
+	}
+	req.Status = d.Get("status").(string)
 
 	var resp client.RecordModifyResponse
-	err := conn.Call("Record.Modify", &req, &resp)
+	err = conn.Call("Record.Modify", &req, &resp)
 	if err != nil {
 		if bsce, ok := err.(*client.BadStatusCodeError); ok && (bsce.Code == "6" || bsce.Code == "8") {
 			// 6 域名ID错误
@@ -115,11 +145,15 @@ func resourceRecordUpdate(d *schema.ResourceData, meta interface{}) error {
 
 func resourceRecordRead(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*client.Client)
+	log.Printf("[DEBUG] reading id %s", d.Id())
 
-	domainId, recordId := splitId(d.Id())
+	domainId, recordId, err := splitId(d.Id())
+	if err != nil {
+		return err
+	}
 	req := client.RecordInfoRequest{RecordId: recordId, DomainId: domainId}
 	var resp client.RecordInfoResponse
-	err := conn.Call("Record.Info", &req, &resp)
+	err = conn.Call("Record.Info", &req, &resp)
 	if err != nil {
 		if bsce, ok := err.(*client.BadStatusCodeError); ok && (bsce.Code == "6" || bsce.Code == "8") {
 			// 6 域名ID错误
@@ -138,7 +172,21 @@ func resourceRecordRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("value", resp.Record.Value)
 	d.Set("mx", resp.Record.Mx)
 	d.Set("ttl", resp.Record.Ttl)
-	d.Set("weight", resp.Record.Weight)
+	log.Printf("[DEBUG] %+v", resp.Record)
+	if resp.Record.Weight != nil {
+		log.Printf("[DEBUG] weight %d", *resp.Record.Weight)
+		d.Set("weight", *resp.Record.Weight)
+	}
+
+	var status string
+	if resp.Record.Enabled == "1" {
+		status = "enable"
+	} else if resp.Record.Enabled == "0" {
+		status = "disable"
+	} else {
+		return fmt.Errorf("unexpect Enable field (0 or 1), got %s", resp.Record.Enabled)
+	}
+	d.Set("status", status)
 
 	return nil
 }
@@ -146,10 +194,13 @@ func resourceRecordRead(d *schema.ResourceData, meta interface{}) error {
 func resourceRecordDelete(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*client.Client)
 
-	domainId, recordId := splitId(d.Id())
+	domainId, recordId, err := splitId(d.Id())
+	if err != nil {
+		return err
+	}
 	var resp client.RecordRemoveResponse
 	req := client.RecordRemoveRequest{DomainId: domainId, RecordId: recordId}
-	err := conn.Call("Record.Remove", &req, &resp)
+	err = conn.Call("Record.Remove", &req, &resp)
 	if err != nil {
 		if bsce, ok := err.(*client.BadStatusCodeError); !ok || (bsce.Code != "6" && bsce.Code != "8") {
 			return err
@@ -161,7 +212,10 @@ func resourceRecordDelete(d *schema.ResourceData, meta interface{}) error {
 	return nil
 }
 
-func splitId(id string) (string, string) {
-	parts := strings.SplitN(id, "-", 2)
-	return parts[0], parts[1]
+func splitId(id string) (string, string, error) {
+	if ok := recordIDRegex.MatchString(id); !ok {
+		return "", "", fmt.Errorf("expects state id to be in the format <domain_id>:<record_id>, got '%s", id)
+	}
+	parts := strings.SplitN(id, ":", 2)
+	return parts[0], parts[1], nil
 }

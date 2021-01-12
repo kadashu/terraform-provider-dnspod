@@ -3,10 +3,9 @@ package dnspod
 import (
 	"net/http"
 
-	"github.com/hashicorp/terraform/helper/schema"
-	"github.com/hashicorp/terraform/terraform"
-
 	"github.com/cofyc/terraform-provider-dnspod/dnspod/client"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/terraform"
 )
 
 func Provider() terraform.ResourceProvider {
