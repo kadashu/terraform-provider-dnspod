@@ -6,10 +6,9 @@ import (
 	"testing"
 
 	"github.com/cofyc/terraform-provider-dnspod/dnspod/client"
-
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/helper/schema"
-	"github.com/hashicorp/terraform/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/terraform"
 )
 
 func TestAccResourceRecord(t *testing.T) {
@@ -94,7 +93,7 @@ func testAccCheckRecordExistsWithProviders(n string, providers *[]*schema.Provid
 		if rs.Primary.ID == "" {
 			return fmt.Errorf("No ID is set")
 		}
-		domainIdRecordId := strings.SplitN(rs.Primary.ID, "-", 2)
+		domainIdRecordId := strings.SplitN(rs.Primary.ID, ":", 2)
 		for _, provider := range *providers {
 			// Ignore if Meta is empty, this can happen for validation providers
 			if provider.Meta() == nil {

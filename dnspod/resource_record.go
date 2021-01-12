@@ -1,12 +1,25 @@
 package dnspod
 
 import (
+	"fmt"
+	"log"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/cofyc/terraform-provider-dnspod/dnspod/client"
-
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 )
+
+var (
+	recordIDRegex = regexp.MustCompile(`^\d+:\d+$`)
+)
+
+// intPtr returns a pointer to an int
+func intPtr(i int) *int {
+	return &i
+}
 
 func resourceRecord() *schema.Resource {
 	return &schema.Resource{
@@ -42,35 +55,87 @@ func resourceRecord() *schema.Resource {
 				Required: true,
 			},
 			"mx": {
-				Type:     schema.TypeString,
-				Optional: true,
-				Default:  "0",
+				// note that this field is type string in the DNSPod API
+				Type:         schema.TypeInt,
+				ValidateFunc: validation.IntBetween(1, 20),
+				Optional:     true, // required if the Type is MX
 			},
 			"ttl": {
-				Type:     schema.TypeString,
-				Optional: true,
-				Default:  600,
+				// note that this field is type string in the DNSPod API
+				Type:         schema.TypeInt,
+				ValidateFunc: validation.IntBetween(1, 604800), // 不同等级域名最小值不同
+				Optional:     true,
+				Default:      600,
 			},
 			"weight": {
-				Type:     schema.TypeString,
-				Optional: true,
+				Type:         schema.TypeInt,
+				Optional:     true,
+				ValidateFunc: validation.IntBetween(0, 100),
+			},
+			"status": {
+				Type:         schema.TypeString,
+				Optional:     true,
+				ValidateFunc: validation.StringInSlice([]string{"enable", "disable"}, false),
+				Default:      "enable",
 			},
 		},
 	}
+}
+
+func prepareRecordForCreateAndModify(d *schema.ResourceData, record *client.Record, create bool) error {
+	var err error
+	if create {
+		record.DomainId = d.Get("domain_id").(string)
+	} else {
+		record.DomainId, record.RecordId, err = splitId(d.Id())
+		if err != nil {
+			return err
+		}
+	}
+
+	record.SubDomain = d.Get("sub_domain").(string)
+	record.RecordType = d.Get("record_type").(string)
+	record.RecordLine = d.Get("record_line").(string)
+	record.Value = d.Get("value").(string)
+
+	// mx
+	if mx, ok := d.GetOk("mx"); ok {
+		if record.RecordType != "MX" {
+			return fmt.Errorf("mx is not expected when the record type is not MX (type: %s)", record.RecordType)
+		}
+		record.Mx = strconv.Itoa(mx.(int))
+	} else {
+		if record.RecordType == "MX" {
+			return fmt.Errorf("mx is recorduired when the record type is MX")
+		}
+	}
+
+	// ttl
+	if ttl, ok := d.GetOk("ttl"); ok {
+		record.Ttl = strconv.Itoa(ttl.(int))
+	} else {
+		return fmt.Errorf("ttl is missing")
+	}
+
+	// weight
+	if weight, ok := d.GetOk("weight"); ok {
+		record.Weight = intPtr(weight.(int))
+	}
+
+	// status
+	record.Status = d.Get("status").(string)
+
+	return nil
 }
 
 func resourceRecordCreate(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*client.Client)
 
 	req := client.RecordCreateRequest{}
-	req.DomainId = d.Get("domain_id").(string)
-	req.SubDomain = d.Get("sub_domain").(string)
-	req.RecordType = d.Get("record_type").(string)
-	req.RecordLine = d.Get("record_line").(string)
-	req.Value = d.Get("value").(string)
-	req.Mx = d.Get("mx").(string)
-	req.Ttl = d.Get("ttl").(string)
-	req.Weight = d.Get("weight").(string)
+
+	if err := prepareRecordForCreateAndModify(d, (*client.Record)(&req), true); err != nil {
+		return err
+	}
 
 	var resp client.RecordCreateResponse
 	err := conn.Call("Record.Create", &req, &resp)
@@ -79,7 +144,7 @@ func resourceRecordCreate(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	id := (*resp.Record.Id).(string)
-	d.SetId(req.DomainId + "-" + id)
+	d.SetId(req.DomainId + ":" + id)
 
 	return nil
 }
@@ -87,18 +152,17 @@ func resourceRecordCreate(d *schema.ResourceData, meta interface{}) error {
 func resourceRecordUpdate(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*client.Client)
 
+	var err error
 	req := client.RecordModifyRequest{}
-	req.DomainId, req.RecordId = splitId(d.Id())
-	req.SubDomain = d.Get("sub_domain").(string)
-	req.RecordType = d.Get("record_type").(string)
-	req.RecordLine = d.Get("record_line").(string)
-	req.Value = d.Get("value").(string)
-	req.Mx = d.Get("mx").(string)
-	req.Ttl = d.Get("ttl").(string)
-	req.Weight = d.Get("weight").(string)
+
+	if err := prepareRecordForCreateAndModify(d, (*client.Record)(&req), false); err != nil {
+		return err
+	}
 
 	var resp client.RecordModifyResponse
-	err := conn.Call("Record.Modify", &req, &resp)
+	log.Printf("[DEBUG] Record.Modify Request: %+v", req)
+	err = conn.Call("Record.Modify", &req, &resp)
+	log.Printf("[DEBUG] Record.Modify Response: %+v, Error: %v", resp, err)
 	if err != nil {
 		if bsce, ok := err.(*client.BadStatusCodeError); ok && (bsce.Code == "6" || bsce.Code == "8") {
 			// 6 域名ID错误
@@ -116,10 +180,13 @@ func resourceRecordUpdate(d *schema.ResourceData, meta interface{}) error {
 func resourceRecordRead(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*client.Client)
 
-	domainId, recordId := splitId(d.Id())
+	domainId, recordId, err := splitId(d.Id())
+	if err != nil {
+		return err
+	}
 	req := client.RecordInfoRequest{RecordId: recordId, DomainId: domainId}
 	var resp client.RecordInfoResponse
-	err := conn.Call("Record.Info", &req, &resp)
+	err = conn.Call("Record.Info", &req, &resp)
 	if err != nil {
 		if bsce, ok := err.(*client.BadStatusCodeError); ok && (bsce.Code == "6" || bsce.Code == "8") {
 			// 6 域名ID错误
@@ -136,9 +203,37 @@ func resourceRecordRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("record_type", resp.Record.RecordType)
 	d.Set("record_line", resp.Record.RecordLine)
 	d.Set("value", resp.Record.Value)
-	d.Set("mx", resp.Record.Mx)
-	d.Set("ttl", resp.Record.Ttl)
-	d.Set("weight", resp.Record.Weight)
+
+	// mx
+	if resp.Record.RecordType == "MX" {
+		// set mx if the type is "MX"
+		mx, err := strconv.Atoi(resp.Record.Mx)
+		if err != nil {
+			return err
+		}
+		d.Set("mx", mx)
+	}
+
+	// ttl
+	ttl, err := strconv.Atoi(resp.Record.Ttl)
+	if err != nil {
+		return err
+	}
+	d.Set("ttl", ttl)
+
+	if resp.Record.Weight != nil {
+		d.Set("weight", *resp.Record.Weight)
+	}
+
+	var status string
+	if resp.Record.Enabled == "1" {
+		status = "enable"
+	} else if resp.Record.Enabled == "0" {
+		status = "disable"
+	} else {
+		return fmt.Errorf("unexpect Enable field (0 or 1), got %s", resp.Record.Enabled)
+	}
+	d.Set("status", status)
 
 	return nil
 }
@@ -146,10 +241,13 @@ func resourceRecordRead(d *schema.ResourceData, meta interface{}) error {
 func resourceRecordDelete(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*client.Client)
 
-	domainId, recordId := splitId(d.Id())
+	domainId, recordId, err := splitId(d.Id())
+	if err != nil {
+		return err
+	}
 	var resp client.RecordRemoveResponse
 	req := client.RecordRemoveRequest{DomainId: domainId, RecordId: recordId}
-	err := conn.Call("Record.Remove", &req, &resp)
+	err = conn.Call("Record.Remove", &req, &resp)
 	if err != nil {
 		if bsce, ok := err.(*client.BadStatusCodeError); !ok || (bsce.Code != "6" && bsce.Code != "8") {
 			return err
@@ -161,7 +259,10 @@ func resourceRecordDelete(d *schema.ResourceData, meta interface{}) error {
 	return nil
 }
 
-func splitId(id string) (string, string) {
-	parts := strings.SplitN(id, "-", 2)
-	return parts[0], parts[1]
+func splitId(id string) (string, string, error) {
+	if ok := recordIDRegex.MatchString(id); !ok {
+		return "", "", fmt.Errorf("expects state id to be in the format <domain_id>:<record_id>, got '%s", id)
+	}
+	parts := strings.SplitN(id, ":", 2)
+	return parts[0], parts[1], nil
 }

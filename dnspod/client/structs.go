@@ -13,7 +13,11 @@ type Record struct {
 	Value      string `json:"value"`
 	Mx         string `json:"mx"`
 	Ttl        string `json:"ttl"`
-	Weight     string `json:"weight"`
+	Weight     *int   `json:"weight"`
+
+	// In Record.Info API, `enabled` is returned instead.
+	Status  string `json:"status"`
+	Enabled string `json:"enabled"`
 }
 
 type Domain struct {

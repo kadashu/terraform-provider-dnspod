@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/cofyc/terraform-provider-dnspod/dnspod"
-	"github.com/hashicorp/terraform/plugin"
+	"github.com/hashicorp/terraform-plugin-sdk/plugin"
 )
 
 func main() {
