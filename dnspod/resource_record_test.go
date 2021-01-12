@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/3pjgames/terraform-provider-dnspod/dnspod/client"
+	"github.com/cofyc/terraform-provider-dnspod/dnspod/client"
 
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"

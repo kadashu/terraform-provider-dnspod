@@ -6,7 +6,7 @@ import (
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/terraform"
 
-	"github.com/3pjgames/terraform-provider-dnspod/dnspod/client"
+	"github.com/cofyc/terraform-provider-dnspod/dnspod/client"
 )
 
 func Provider() terraform.ResourceProvider {

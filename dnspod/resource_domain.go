@@ -1,7 +1,7 @@
 package dnspod
 
 import (
-	"github.com/3pjgames/terraform-provider-dnspod/dnspod/client"
+	"github.com/cofyc/terraform-provider-dnspod/dnspod/client"
 
 	"github.com/hashicorp/terraform/helper/schema"
 )

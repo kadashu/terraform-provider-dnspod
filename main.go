@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/3pjgames/terraform-provider-dnspod/dnspod"
+	"github.com/cofyc/terraform-provider-dnspod/dnspod"
 	"github.com/hashicorp/terraform/plugin"
 )
 

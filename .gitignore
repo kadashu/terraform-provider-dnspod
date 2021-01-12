@@ -32,3 +32,4 @@ vendor/
 # my gitignore
 .env
 /terraform-provider-dnspod
+*.tfrc
