@@ -43,6 +43,11 @@ To import domain, use the domain ID return from API.
 
 To import record, concatenate its domain id and record id with ":".
 
+## Development
+
+See
+https://www.terraform.io/docs/cli/config/config-file.html#development-overrides-for-provider-developers.
+
 ## References
 
 - https://docs.dnspod.cn/api/

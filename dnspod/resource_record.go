@@ -97,6 +97,15 @@ func prepareRecordForCreateAndModify(d *schema.ResourceData, record *client.Reco
 	record.RecordLine = d.Get("record_line").(string)
 	record.Value = d.Get("value").(string)
 
+	// DNSPod API will append dot at the value of CNAME value if not present.
+	// This will confuse users when then run plan again and see the terraform
+	// state diffs with API result.
+	if record.RecordType == "CNAME" {
+		if !strings.HasSuffix(record.Value, ".") {
+			return fmt.Errorf("value %q must ends with dot (.) if the record type is %s", record.Value, record.RecordType)
+		}
+	}
+
 	// mx
 	if mx, ok := d.GetOk("mx"); ok {
 		if record.RecordType != "MX" {
