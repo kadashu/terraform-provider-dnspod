@@ -25,7 +25,17 @@ func resourceRecord() *schema.Resource {
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
 		},
-
+		// https://github.com/hashicorp/terraform-plugin-sdk/issues/233
+		CustomizeDiff: func(d *schema.ResourceDiff, v interface{}) error {
+			record_type := d.Get("record_type").(string)
+			value := d.Get("value").(string)
+			if record_type == "CNAME" {
+				if !strings.HasSuffix(value, ".") {
+					return fmt.Errorf("the value must be fully qualified domain name with a trailing dot, got %q", value)
+				}
+			}
+			return nil
+		},
 		Schema: map[string]*schema.Schema{
 			"domain_id": {
 				Type:     schema.TypeString,
