@@ -16,6 +16,11 @@ var (
 	recordIDRegex = regexp.MustCompile(`^\d+:\d+$`)
 )
 
+// isTypeRequiredFullQualifiedDomain returns true if the type requires full qualified domain name.
+func isTypeRequiredFullQualifiedDomain(typ string) bool {
+	return typ == "CNAME" || typ == "MX"
+}
+
 func resourceRecord() *schema.Resource {
 	return &schema.Resource{
 		Create: resourceRecordCreate,
@@ -29,7 +34,7 @@ func resourceRecord() *schema.Resource {
 		CustomizeDiff: func(d *schema.ResourceDiff, v interface{}) error {
 			record_type := d.Get("record_type").(string)
 			value := d.Get("value").(string)
-			if record_type == "CNAME" {
+			if isTypeRequiredFullQualifiedDomain(record_type) {
 				if !strings.HasSuffix(value, ".") {
 					return fmt.Errorf("the value must be fully qualified domain name with a trailing dot, got %q", value)
 				}
@@ -107,10 +112,10 @@ func prepareRecordForCreateAndModify(d *schema.ResourceData, record *client.Reco
 	record.RecordLine = d.Get("record_line").(string)
 	record.Value = d.Get("value").(string)
 
-	// DNSPod API will append dot at the value of CNAME value if not present.
+	// DNSPod API will append dot at the value of CNAME/MX value if not present.
 	// This will confuse users when they run plan again and see the terraform
 	// state diffs with API result.
-	if record.RecordType == "CNAME" {
+	if isTypeRequiredFullQualifiedDomain(record.RecordType) {
 		if !strings.HasSuffix(record.Value, ".") {
 			return fmt.Errorf("value %q must ends with dot (.) if the record type is %s", record.Value, record.RecordType)
 		}
