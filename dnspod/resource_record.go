@@ -18,7 +18,7 @@ var (
 
 // isTypeRequiredFullQualifiedDomain returns true if the type requires full qualified domain name.
 func isTypeRequiredFullQualifiedDomain(typ string) bool {
-	return typ == "CNAME" || typ == "MX"
+	return typ == "CNAME" || typ == "MX" || typ == "NS"
 }
 
 func resourceRecord() *schema.Resource {
@@ -112,7 +112,7 @@ func prepareRecordForCreateAndModify(d *schema.ResourceData, record *client.Reco
 	record.RecordLine = d.Get("record_line").(string)
 	record.Value = d.Get("value").(string)
 
-	// DNSPod API will append dot at the value of CNAME/MX value if not present.
+	// DNSPod API will append dot at the value of CNAME/NS/MX value if not present.
 	// This will confuse users when they run plan again and see the terraform
 	// state diffs with API result.
 	if isTypeRequiredFullQualifiedDomain(record.RecordType) {
